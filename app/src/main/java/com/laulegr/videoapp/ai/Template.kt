@@ -12,4 +12,5 @@ data class EditTemplate(
     val description: String,
     val perClipDurationMs: Long?,
     val filter: FilterPreset,
+    val speed: Float = 1f,
 )

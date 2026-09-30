@@ -1,28 +1,36 @@
 # Reel Cut
 
 Native Android-App (Kotlin + Jetpack Compose) zum schnellen Schneiden und
-Zusammenfügen von Kurzvideos für Instagram — Trimmen, Reihenfolge ändern,
-Filter drauf, exportieren, teilen.
+Zusammenfügen von Kurzvideos für Instagram — Trimmen, Tempo, Filter, Text,
+Musik, exportieren, teilen.
 
-## Funktionsumfang (v0.1)
+## Funktionsumfang (v0.2)
 
 - **Videos auswählen** über den System-Photo-Picker (kein Storage-Permission-Dialog nötig)
 - **Timeline**: Clips per Pfeil-Buttons neu anordnen, einzeln entfernen
 - **Trimmen** pro Clip über einen Start/End-Range-Slider
+- **Geschwindigkeit** pro Clip (0.25x–3x), Video (`SpeedChangeEffect`) und Audio (`SonicAudioProcessor`) bleiben synchron
+- **Text-Overlay** pro Clip (unteres Drittel, `TextOverlay`/`OverlayEffect`)
 - **Filter** (Original, Vibrant, Schwarz-Weiß, Warm, Moody) – als Media3-GL-Effekte beim Export angewendet
-- **Übergänge**: Schnitt (aktiv) · Überblendung (UI vorhanden, als "bald verfügbar" markiert – Media3s Video-Compositing für Crossfades ist noch experimentell)
-- **KI-Vorlagen (v1, regelbasiert)**: schlägt basierend auf Clip-Anzahl/-Länge ein Schnitttempo + Filter vor (`ai/TemplateEngine.kt`), hinter einem `TemplateEngine`-Interface, damit später ein echtes on-device/cloud-Modell eingesetzt werden kann, ohne UI/ViewModel anzufassen
-- **Export**: Media3 Transformer trimmt, hängt Clips zusammen, rendert die Filter fest ein und speichert das MP4 direkt in die Galerie (`Movies/ReelCut`) – von dort aus normal zu Instagram teilbar
+- **Übergänge**: Schnitt · Fade to Black (eigener zeitbasierter `RgbMatrix`-Effekt – ein echter Video-Crossfade/Dissolve bräuchte Media3s noch experimentelles Multi-Sequence-Compositing, daher diese robuste Alternative)
+- **Musik**: eigener Titel unterlegbar, Lautstärke regelbar (`GainAudioProcessor`, eigener `BaseAudioProcessor` für PCM16-Gain), automatisch auf Videolänge gekürzt. *(v1: konstante Lautstärke, kein automatisches Sprach-Ducking – siehe Nächste Schritte)*
+- **KI-Vorlagen**:
+  - v1, regelbasiert (`HeuristicTemplateEngine`): Schnitttempo + Filter aus Clip-Anzahl/-Länge
+  - v2, inhaltsbasiert (`ContentAwareTemplateEngine` + `ContentLabeler`): ML Kit Image Labeling (on-device, offline, kein API-Key) auf dem ersten Frame jedes Clips, erkennt z. B. Personen/Sport/Essen und schlägt passend Tempo+Filter+Speed vor – läuft asynchron nach, blockiert die UI nicht
+- **Export**: Media3 Transformer trimmt, hängt Clips zusammen, rendert Filter/Text/Fades/Speed fest ein, mischt optional Musik dazu und speichert das MP4 direkt in die Galerie (`Movies/ReelCut`)
+- **Teilen**: nach dem Export direkt per System-Share-Sheet (Instagram erscheint dort automatisch als Ziel)
 
 ## Architektur
 
 ```
-model/      VideoClip, FilterPreset, TransitionType – reine Datenklassen
-editing/    VideoExporter (Media3 Transformer-Pipeline), FilterEffects (Preset -> Media3 Effects),
-            ThumbnailLoader (MediaMetadataRetriever für Dauer + Vorschaubild)
-ai/         TemplateEngine-Interface + HeuristicTemplateEngine (v1)
+model/      VideoClip (inkl. speed, captionText), FilterPreset, TransitionType
+editing/    VideoExporter (Media3 Transformer-Pipeline: Trim, Speed, Fade, Text, Filter, Musik-Mix)
+            FilterEffects, SpeedEffects, FadeEffects (eigene RgbMatrix), TextOverlayEffects,
+            AudioGain (eigener BaseAudioProcessor), ShareIntent, ThumbnailLoader
+ai/         TemplateEngine-Interface + HeuristicTemplateEngine (v1),
+            ContentLabeler (ML Kit) + ContentAwareTemplateEngine (v2)
 ui/home     Auswahl-Screen (Photo Picker)
-ui/editor   Timeline, Filter/Übergang-Auswahl, KI-Vorlagen, Export-Flow (EditorViewModel + EditorScreen)
+ui/editor   Timeline (Trim/Speed/Text), Filter/Übergang/Musik, KI-Vorlagen, Export+Teilen
 ui/navigation  Zwei Screens über eine gemeinsame, activity-scoped EditorViewModel-Instanz
 ```
 
@@ -45,17 +53,17 @@ oder Emulator mit **API 26+**.
 
 > **Hinweis:** Der Code wurde auf dieser Maschine geschrieben, aber **nicht
 > kompiliert** – es ist weder JDK noch Android SDK noch Gradle installiert.
-> Die Media3-Transformer-APIs (`Effects`, `Composition`, `EditedMediaItemSequence`)
-> sind nach bestem Wissen für **media3 1.4.1** eingesetzt; falls Android Studio
-> beim ersten Sync einzelne Imports/Signaturen bemängelt, sind das kleine,
-> lokal schnell zu fixende Abweichungen zur tatsächlich aufgelösten Version –
-> kein struktureller Umbau.
+> Alle Media3-Transformer/Effect-APIs (`Effects`, `Composition`, `EditedMediaItemSequence`,
+> `SpeedChangeEffect`, `RgbMatrix`, `OverlayEffect`, `TextOverlay`, `BaseAudioProcessor`, …)
+> wurden gegen den echten Quellcode von **media3 1.6.1** (github.com/androidx/media,
+> Tag `1.6.1`) geprüft, nicht nur aus dem Gedächtnis geschrieben. Die App selbst lief
+> nie auf einem Gerät – beim ersten Sync/Run in Android Studio können trotzdem noch
+> kleinere Korrekturen nötig sein.
 
 ## Nächste Schritte / Ideen
 
-- Echte Crossfade-/Musik-Übergänge (Media3 `VideoCompositorSettings` bzw. eigener GL-Effekt)
-- Musik-Spur unterlegen, Lautstärke-Ducking
-- Text-/Sticker-Overlays
-- KI-Vorlagen v2: Inhaltsbasierte Vorschläge (z. B. on-device ML Kit Objekt-/Szenenerkennung
-  oder ein Cloud-Call, der tatsächlich Frames/Audio analysiert statt nur Clip-Metadaten)
-- Direkter "Share to Instagram"-Intent statt nur "in Galerie speichern"
+- Echter Video-Crossfade/Dissolve (Media3 `VideoCompositorSettings`, noch experimentell) statt Fade-to-Black
+- Automatisches Lautstärke-Ducking der Musik bei Sprache (aktuell nur konstante Lautstärke)
+- Sticker/Bild-Overlays zusätzlich zu Text
+- KI-Vorlagen v3: Cloud-Analyse (Audio/Bewegung) für noch genauere Vorschläge
+- Direktes Teilen als Instagram-Story (eigener Intent-Contract) statt generischem Share-Sheet

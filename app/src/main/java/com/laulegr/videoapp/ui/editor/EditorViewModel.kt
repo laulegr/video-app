@@ -4,10 +4,13 @@ import android.app.Application
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.laulegr.videoapp.ai.ContentAwareTemplateEngine
+import com.laulegr.videoapp.ai.ContentLabeler
 import com.laulegr.videoapp.ai.EditTemplate
 import com.laulegr.videoapp.ai.HeuristicTemplateEngine
 import com.laulegr.videoapp.ai.TemplateEngine
 import com.laulegr.videoapp.editing.ExportOutcome
+import com.laulegr.videoapp.editing.MusicSettings
 import com.laulegr.videoapp.editing.VideoExporter
 import com.laulegr.videoapp.editing.VideoMetadata
 import com.laulegr.videoapp.model.FilterPreset
@@ -31,9 +34,11 @@ data class EditorUiState(
     val filter: FilterPreset = FilterPreset.NONE,
     val transition: TransitionType = TransitionType.CUT,
     val templates: List<EditTemplate> = emptyList(),
+    val musicUri: Uri? = null,
+    val musicVolume: Float = 0.5f,
     val exportState: ExportState = ExportState.Idle,
 ) {
-    val totalDurationMs: Long get() = clips.sumOf { it.trimmedDurationMs }
+    val totalDurationMs: Long get() = clips.sumOf { it.effectiveDurationMs }
 }
 
 class EditorViewModel(application: Application) : AndroidViewModel(application) {
@@ -53,6 +58,21 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
             _uiState.update { state ->
                 val clips = state.clips + newClips
                 state.copy(clips = clips, templates = templateEngine.suggest(clips))
+            }
+            refreshContentAwareSuggestion()
+        }
+    }
+
+    /** Best-effort: adds one extra ML Kit-based suggestion once labels are ready; never blocks the UI. */
+    private fun refreshContentAwareSuggestion() {
+        viewModelScope.launch {
+            val clips = _uiState.value.clips
+            if (clips.isEmpty()) return@launch
+            val labels = runCatching { ContentLabeler.dominantLabels(clips) }.getOrNull() ?: return@launch
+            val smart = ContentAwareTemplateEngine.suggestFrom(labels, clips.size) ?: return@launch
+            _uiState.update { state ->
+                if (state.clips != clips) return@update state // timeline changed meanwhile, discard
+                state.copy(templates = listOf(smart) + state.templates.filterNot { it.id == smart.id })
             }
         }
     }
@@ -85,22 +105,45 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    fun setClipSpeed(clipId: String, speed: Float) {
+        _uiState.update { state ->
+            val clips = state.clips.map { clip -> if (clip.id == clipId) clip.copy(speed = speed) else clip }
+            state.copy(clips = clips)
+        }
+    }
+
+    fun setClipCaption(clipId: String, caption: String) {
+        _uiState.update { state ->
+            val clips = state.clips.map { clip ->
+                if (clip.id == clipId) clip.copy(captionText = caption.ifBlank { null }) else clip
+            }
+            state.copy(clips = clips)
+        }
+    }
+
     fun setFilter(filter: FilterPreset) {
         _uiState.update { it.copy(filter = filter) }
     }
 
     fun setTransition(transition: TransitionType) {
-        if (!transition.available) return
         _uiState.update { it.copy(transition = transition) }
+    }
+
+    fun setMusic(uri: Uri?) {
+        _uiState.update { it.copy(musicUri = uri) }
+    }
+
+    fun setMusicVolume(volume: Float) {
+        _uiState.update { it.copy(musicVolume = volume.coerceIn(0f, 1f)) }
     }
 
     fun applyTemplate(template: EditTemplate) {
         _uiState.update { state ->
             val clips = state.clips.map { clip ->
                 val end = template.perClipDurationMs
-                    ?.let { (it).coerceAtMost(clip.durationMs) }
+                    ?.let { it.coerceAtMost(clip.durationMs) }
                     ?: clip.durationMs
-                clip.copy(trimStartMs = 0L, trimEndMs = end)
+                clip.copy(trimStartMs = 0L, trimEndMs = end, speed = template.speed)
             }
             state.copy(clips = clips, filter = template.filter)
         }
@@ -112,7 +155,14 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
 
         _uiState.update { it.copy(exportState = ExportState.Running) }
         viewModelScope.launch {
-            when (val outcome = exporter.export(state.clips, state.filter)) {
+            val music = state.musicUri?.let { MusicSettings(it, state.musicVolume) }
+            val outcome = exporter.export(
+                clips = state.clips,
+                filter = state.filter,
+                transition = state.transition,
+                music = music,
+            )
+            when (outcome) {
                 is ExportOutcome.Success ->
                     _uiState.update { it.copy(exportState = ExportState.Done(outcome.uri)) }
                 is ExportOutcome.Failure ->

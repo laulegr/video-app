@@ -5,15 +5,18 @@ import android.content.Context
 import android.net.Uri
 import android.os.Build
 import android.provider.MediaStore
-import androidx.media3.common.Effects
+import androidx.media3.common.Effect
 import androidx.media3.common.MediaItem
+import androidx.media3.common.audio.AudioProcessor
 import androidx.media3.transformer.Composition
 import androidx.media3.transformer.EditedMediaItem
 import androidx.media3.transformer.EditedMediaItemSequence
+import androidx.media3.transformer.Effects
 import androidx.media3.transformer.ExportException
 import androidx.media3.transformer.ExportResult
 import androidx.media3.transformer.Transformer
 import com.laulegr.videoapp.model.FilterPreset
+import com.laulegr.videoapp.model.TransitionType
 import com.laulegr.videoapp.model.VideoClip
 import kotlinx.coroutines.suspendCancellableCoroutine
 import java.io.File
@@ -26,10 +29,14 @@ sealed interface ExportOutcome {
     data class Failure(val message: String) : ExportOutcome
 }
 
+/** Optional background music mixed under the clips' own audio. [volume] is 0f (silent) - 1f (full). */
+data class MusicSettings(val uri: Uri, val volume: Float)
+
 /**
- * Trims + concatenates [VideoClip]s into a single MP4 via Media3 Transformer,
- * applies a [FilterPreset] to the whole export, then copies the result into
- * MediaStore so it shows up in the gallery and can be shared to Instagram.
+ * Trims, speed-changes, fades and concatenates [VideoClip]s into a single MP4
+ * via Media3 Transformer, applies a [FilterPreset] and optional caption
+ * overlays, mixes in optional background [MusicSettings], then copies the
+ * result into MediaStore so it shows up in the gallery and can be shared.
  *
  * Must be called from a thread with a Looper (the Transformer requirement) -
  * call it from a coroutine on Dispatchers.Main.
@@ -39,13 +46,15 @@ class VideoExporter(private val context: Context) {
     suspend fun export(
         clips: List<VideoClip>,
         filter: FilterPreset,
+        transition: TransitionType,
+        music: MusicSettings?,
     ): ExportOutcome {
         if (clips.isEmpty()) return ExportOutcome.Failure("Keine Clips ausgewählt.")
 
         val outputFile = File(context.cacheDir, "export_${System.currentTimeMillis()}.mp4")
 
         return try {
-            runTransformer(clips, filter, outputFile)
+            runTransformer(clips, filter, transition, music, outputFile)
             val savedUri = saveToGallery(outputFile)
             ExportOutcome.Success(savedUri)
         } catch (t: Throwable) {
@@ -58,11 +67,27 @@ class VideoExporter(private val context: Context) {
     private suspend fun runTransformer(
         clips: List<VideoClip>,
         filter: FilterPreset,
+        transition: TransitionType,
+        music: MusicSettings?,
         outputFile: File,
     ) = suspendCancellableCoroutine<Unit> { continuation ->
-        val editedItems = clips.map { clip -> clip.toEditedMediaItem(filter) }
-        val sequence = EditedMediaItemSequence(editedItems)
-        val composition = Composition.Builder(listOf(sequence)).build()
+        val editedItems = clips.mapIndexed { index, clip ->
+            clip.toEditedMediaItem(
+                filter = filter,
+                transition = transition,
+                isFirstClip = index == 0,
+                isLastClip = index == clips.lastIndex,
+            )
+        }
+        val videoSequence = EditedMediaItemSequence.Builder(editedItems).build()
+
+        val sequences = mutableListOf(videoSequence)
+        if (music != null) {
+            val totalDurationMs = clips.sumOf { it.effectiveDurationMs }
+            sequences += buildMusicSequence(music, totalDurationMs)
+        }
+
+        val composition = Composition.Builder(sequences).build()
 
         val transformer = Transformer.Builder(context)
             .addListener(object : Transformer.Listener {
@@ -85,7 +110,12 @@ class VideoExporter(private val context: Context) {
         continuation.invokeOnCancellation { transformer.cancel() }
     }
 
-    private fun VideoClip.toEditedMediaItem(filter: FilterPreset): EditedMediaItem {
+    private fun VideoClip.toEditedMediaItem(
+        filter: FilterPreset,
+        transition: TransitionType,
+        isFirstClip: Boolean,
+        isLastClip: Boolean,
+    ): EditedMediaItem {
         val clippedItem = MediaItem.Builder()
             .setUri(uri)
             .setClippingConfiguration(
@@ -96,11 +126,46 @@ class VideoExporter(private val context: Context) {
             )
             .build()
 
-        val effects = Effects(emptyList(), FilterEffects.effectsFor(filter))
+        val speedEffects = buildSpeedEffects(speed)
+        val fade = FadeEffects.forClip(
+            clipEffectiveDurationUs = effectiveDurationMs * 1_000L,
+            isFirstClip = isFirstClip,
+            isLastClip = isLastClip,
+            transition = transition,
+        )
+        val captionOverlay = buildCaptionOverlay(captionText)
+
+        val videoEffects = buildList<Effect> {
+            addAll(FilterEffects.effectsFor(filter))
+            speedEffects.videoEffect?.let(::add)
+            fade?.let(::add)
+            captionOverlay?.let(::add)
+        }
+        val audioProcessors = listOfNotNull(speedEffects.audioProcessor)
 
         return EditedMediaItem.Builder(clippedItem)
-            .setEffects(effects)
+            .setEffects(Effects(audioProcessors, videoEffects))
             .build()
+    }
+
+    private fun buildMusicSequence(music: MusicSettings, totalDurationMs: Long): EditedMediaItemSequence {
+        val musicItem = MediaItem.Builder()
+            .setUri(music.uri)
+            .setClippingConfiguration(
+                MediaItem.ClippingConfiguration.Builder()
+                    .setEndPositionMs(totalDurationMs)
+                    .build()
+            )
+            .build()
+
+        val audioProcessors: List<AudioProcessor> = listOf(GainAudioProcessor(music.volume))
+
+        val editedMusicItem = EditedMediaItem.Builder(musicItem)
+            .setRemoveVideo(true)
+            .setEffects(Effects(audioProcessors, emptyList()))
+            .build()
+
+        return EditedMediaItemSequence.Builder(listOf(editedMusicItem)).build()
     }
 
     private fun saveToGallery(file: File): Uri {

@@ -11,12 +11,15 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Close
@@ -37,6 +40,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RangeSlider
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -80,11 +84,32 @@ fun EditorScreen(
                 },
             )
         },
+        bottomBar = {
+            Surface(shadowElevation = 8.dp) {
+                Button(
+                    onClick = viewModel::export,
+                    enabled = state.clips.isNotEmpty() && state.exportState !is ExportState.Running,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .navigationBarsPadding()
+                        .padding(16.dp),
+                ) {
+                    if (state.exportState is ExportState.Running) {
+                        CircularProgressIndicator(modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text("Exportiere…")
+                    } else {
+                        Text("Exportieren (${formatMs(state.totalDurationMs)})")
+                    }
+                }
+            }
+        },
     ) { padding ->
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
+                .verticalScroll(rememberScrollState())
                 .padding(vertical = 16.dp),
         ) {
             SectionLabel("Timeline")
@@ -119,23 +144,7 @@ fun EditorScreen(
                 onVolumeChange = viewModel::setMusicVolume,
             )
 
-            Spacer(Modifier.weight(1f))
-
-            Button(
-                onClick = viewModel::export,
-                enabled = state.clips.isNotEmpty() && state.exportState !is ExportState.Running,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp),
-            ) {
-                if (state.exportState is ExportState.Running) {
-                    CircularProgressIndicator(modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Text("Exportiere…")
-                } else {
-                    Text("Exportieren (${formatMs(state.totalDurationMs)})")
-                }
-            }
+            Spacer(Modifier.height(16.dp))
         }
     }
 

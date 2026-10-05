@@ -145,7 +145,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                     ?: clip.durationMs
                 clip.copy(trimStartMs = 0L, trimEndMs = end, speed = template.speed)
             }
-            state.copy(clips = clips, filter = template.filter)
+            state.copy(clips = clips, filter = template.filter, transition = template.transition)
         }
     }
 

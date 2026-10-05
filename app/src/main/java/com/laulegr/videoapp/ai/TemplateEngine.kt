@@ -1,6 +1,7 @@
 package com.laulegr.videoapp.ai
 
 import com.laulegr.videoapp.model.FilterPreset
+import com.laulegr.videoapp.model.TransitionType
 import com.laulegr.videoapp.model.VideoClip
 
 /**
@@ -48,6 +49,36 @@ class HeuristicTemplateEngine : TemplateEngine {
             )
         }
 
+        // Two or more clips -> a moodier, film-like cut with fades between clips.
+        if (clips.size >= 2) {
+            suggestions += EditTemplate(
+                id = "cinematic",
+                title = "Cinematic",
+                description = "Moody-Look mit Fade-to-Black zwischen den Clips – wirkt wie ein kleiner Film.",
+                perClipDurationMs = (avgMs * 0.7).toLong().coerceAtLeast(2_000L),
+                filter = FilterPreset.MOODY,
+                transition = TransitionType.FADE_TO_BLACK,
+            )
+        }
+
+        suggestions += EditTemplate(
+            id = "retro",
+            title = "Retro Vibes",
+            description = "Vintage-Look, entsättigt und warm – wie von einer alten Kamera.",
+            perClipDurationMs = null,
+            filter = FilterPreset.VINTAGE,
+        )
+
+        // High-energy variant for anyone who wants it snappier and punchier.
+        suggestions += EditTemplate(
+            id = "hype",
+            title = "Hype Reel",
+            description = "Neon-Filter, 1.25x Tempo, straffe Schnitte – für viel Energie im Feed.",
+            perClipDurationMs = 1_200L,
+            filter = FilterPreset.NEON,
+            speed = 1.25f,
+        )
+
         // Always offer a neutral, untouched option.
         suggestions += EditTemplate(
             id = "clean",
@@ -68,21 +99,31 @@ class HeuristicTemplateEngine : TemplateEngine {
  */
 object ContentAwareTemplateEngine {
 
-    private val actionLabels = setOf("Vehicle", "Sport", "Sports equipment", "Outdoor", "Water", "Bicycle")
+    private val actionLabels = setOf("Vehicle", "Sport", "Sports equipment", "Outdoor recreation", "Bicycle", "Extreme sport")
     private val portraitLabels = setOf("Person", "Face", "Selfie", "Smile", "Portrait photography")
     private val foodLabels = setOf("Food", "Dish", "Cuisine", "Meal", "Drink")
+    private val natureLabels = setOf("Mountain", "Sky", "Nature", "Cloud", "Landscape", "Water", "Lake", "Horizon", "Hill")
 
     fun suggestFrom(labels: List<String>, clipCount: Int): EditTemplate? {
-        val topLabels = labels.take(5).toSet()
+        val topLabels = labels.take(6).toSet()
 
         return when {
             topLabels.any { it in actionLabels } -> EditTemplate(
                 id = "ai_action",
                 title = "Action (KI)",
-                description = "Erkannt: Bewegung/Sport im Material – knackige 1s-Schnitte, leichter Speed-up, knalliger Filter.",
+                description = "Erkannt: Bewegung/Sport im Material – knackige 1s-Schnitte, leichter Speed-up, Neon-Filter.",
                 perClipDurationMs = 1_000L,
-                filter = FilterPreset.VIBRANT,
+                filter = FilterPreset.NEON,
                 speed = 1.15f,
+            )
+
+            topLabels.any { it in natureLabels } -> EditTemplate(
+                id = "ai_nature",
+                title = "Nature (KI)",
+                description = "Erkannt: Landschaft/Natur im Material – ruhigeres Tempo, kühlerer Look, Fade zwischen den Clips.",
+                perClipDurationMs = null,
+                filter = FilterPreset.COOL,
+                transition = TransitionType.FADE_TO_BLACK,
             )
 
             topLabels.any { it in portraitLabels } -> EditTemplate(

@@ -67,11 +67,11 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
 
     // Media3: playback, trim/merge/effects export pipeline
-    implementation("androidx.media3:media3-exoplayer:1.6.1")
-    implementation("androidx.media3:media3-ui:1.6.1")
-    implementation("androidx.media3:media3-transformer:1.6.1")
-    implementation("androidx.media3:media3-effect:1.6.1")
-    implementation("androidx.media3:media3-common:1.6.1")
+    implementation("androidx.media3:media3-exoplayer:1.9.4")
+    implementation("androidx.media3:media3-ui:1.9.4")
+    implementation("androidx.media3:media3-transformer:1.9.4")
+    implementation("androidx.media3:media3-effect:1.9.4")
+    implementation("androidx.media3:media3-common:1.9.4")
 
     // On-device content labeling for AI template suggestions (Task -> suspend bridge)
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.9.0")

@@ -87,7 +87,17 @@ class VideoExporter(private val context: Context) {
             sequences += buildMusicSequence(music, totalDurationMs)
         }
 
-        val composition = Composition.Builder(sequences).build()
+        // Phones increasingly record HDR (HLG/10-bit) by default. On-device testing
+        // (Samsung Galaxy S25) found BOTH proper tone-map modes
+        // (..._USING_OPEN_GL and ..._USING_MEDIACODEC) silently produced wrong,
+        // shifted colors regardless of effects - a device/Media3 limitation, not
+        // something this app's code controls. Forcing the HDR bytes to be read
+        // directly as SDR, with no tone-map conversion step at all, is what
+        // actually renders correctly on this hardware. "Likely washed out" per
+        // the Media3 docs, but matched the real footage in every on-device test.
+        val composition = Composition.Builder(sequences)
+            .setHdrMode(Composition.HDR_MODE_EXPERIMENTAL_FORCE_INTERPRET_HDR_AS_SDR)
+            .build()
 
         val transformer = Transformer.Builder(context)
             .addListener(object : Transformer.Listener {

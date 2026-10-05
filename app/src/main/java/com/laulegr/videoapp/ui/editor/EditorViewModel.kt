@@ -13,8 +13,9 @@ import com.laulegr.videoapp.editing.ExportOutcome
 import com.laulegr.videoapp.editing.MusicSettings
 import com.laulegr.videoapp.editing.VideoExporter
 import com.laulegr.videoapp.editing.VideoMetadata
+import com.laulegr.videoapp.model.CanvasFormat
 import com.laulegr.videoapp.model.FilterPreset
-import com.laulegr.videoapp.model.TransitionType
+import com.laulegr.videoapp.model.Transition
 import com.laulegr.videoapp.model.VideoClip
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -32,7 +33,7 @@ sealed interface ExportState {
 data class EditorUiState(
     val clips: List<VideoClip> = emptyList(),
     val filter: FilterPreset = FilterPreset.NONE,
-    val transition: TransitionType = TransitionType.CUT,
+    val canvas: CanvasFormat = CanvasFormat.REEL,
     val templates: List<EditTemplate> = emptyList(),
     val musicUri: Uri? = null,
     val musicVolume: Float = 0.5f,
@@ -125,8 +126,20 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         _uiState.update { it.copy(filter = filter) }
     }
 
-    fun setTransition(transition: TransitionType) {
-        _uiState.update { it.copy(transition = transition) }
+    /** Sets the transition at the cut after [clipId]. */
+    fun setClipTransition(clipId: String, transition: Transition) {
+        _uiState.update { state ->
+            val clips = state.clips.map { clip -> if (clip.id == clipId) clip.copy(transitionOut = transition) else clip }
+            state.copy(clips = clips)
+        }
+    }
+
+    fun applyTransitionToAll(transition: Transition) {
+        _uiState.update { state -> state.copy(clips = state.clips.map { it.copy(transitionOut = transition) }) }
+    }
+
+    fun setCanvas(canvas: CanvasFormat) {
+        _uiState.update { it.copy(canvas = canvas) }
     }
 
     fun setMusic(uri: Uri?) {
@@ -143,9 +156,14 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                 val end = template.perClipDurationMs
                     ?.let { it.coerceAtMost(clip.durationMs) }
                     ?: clip.durationMs
-                clip.copy(trimStartMs = 0L, trimEndMs = end, speed = template.speed)
+                clip.copy(
+                    trimStartMs = 0L,
+                    trimEndMs = end,
+                    speed = template.speed,
+                    transitionOut = template.transition,
+                )
             }
-            state.copy(clips = clips, filter = template.filter, transition = template.transition)
+            state.copy(clips = clips, filter = template.filter)
         }
     }
 
@@ -159,7 +177,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
             val outcome = exporter.export(
                 clips = state.clips,
                 filter = state.filter,
-                transition = state.transition,
+                canvas = state.canvas,
                 music = music,
             )
             when (outcome) {

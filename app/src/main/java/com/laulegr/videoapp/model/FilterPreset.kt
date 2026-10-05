@@ -9,7 +9,7 @@ package com.laulegr.videoapp.model
  * how they were root-caused.
  */
 enum class FilterPreset(val label: String) {
-    NONE("Original"),
+    NONE("Normal"),
     VIBRANT("Vibrant"),
     NOIR("Noir"),
     SEPIA("Sepia"),

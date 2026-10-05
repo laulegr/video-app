@@ -8,6 +8,7 @@ import android.provider.MediaStore
 import androidx.media3.common.Effect
 import androidx.media3.common.MediaItem
 import androidx.media3.common.audio.AudioProcessor
+import androidx.media3.effect.Presentation
 import androidx.media3.transformer.Composition
 import androidx.media3.transformer.EditedMediaItem
 import androidx.media3.transformer.EditedMediaItemSequence
@@ -15,8 +16,9 @@ import androidx.media3.transformer.Effects
 import androidx.media3.transformer.ExportException
 import androidx.media3.transformer.ExportResult
 import androidx.media3.transformer.Transformer
+import com.laulegr.videoapp.model.CanvasFormat
 import com.laulegr.videoapp.model.FilterPreset
-import com.laulegr.videoapp.model.TransitionType
+import com.laulegr.videoapp.model.Transition
 import com.laulegr.videoapp.model.VideoClip
 import kotlinx.coroutines.suspendCancellableCoroutine
 import java.io.File
@@ -33,10 +35,11 @@ sealed interface ExportOutcome {
 data class MusicSettings(val uri: Uri, val volume: Float)
 
 /**
- * Trims, speed-changes, fades and concatenates [VideoClip]s into a single MP4
- * via Media3 Transformer, applies a [FilterPreset] and optional caption
- * overlays, mixes in optional background [MusicSettings], then copies the
- * result into MediaStore so it shows up in the gallery and can be shared.
+ * Trims, speed-changes and concatenates [VideoClip]s into a single MP4 via
+ * Media3 Transformer, crops them to a [CanvasFormat], applies a [FilterPreset],
+ * caption overlays and each cut's [Transition], mixes in optional background
+ * [MusicSettings], then copies the result into MediaStore so it shows up in
+ * the gallery and can be shared.
  *
  * Must be called from a thread with a Looper (the Transformer requirement) -
  * call it from a coroutine on Dispatchers.Main.
@@ -46,7 +49,7 @@ class VideoExporter(private val context: Context) {
     suspend fun export(
         clips: List<VideoClip>,
         filter: FilterPreset,
-        transition: TransitionType,
+        canvas: CanvasFormat,
         music: MusicSettings?,
     ): ExportOutcome {
         if (clips.isEmpty()) return ExportOutcome.Failure("Keine Clips ausgewählt.")
@@ -54,7 +57,7 @@ class VideoExporter(private val context: Context) {
         val outputFile = File(context.cacheDir, "export_${System.currentTimeMillis()}.mp4")
 
         return try {
-            runTransformer(clips, filter, transition, music, outputFile)
+            runTransformer(clips, filter, canvas, music, outputFile)
             val savedUri = saveToGallery(outputFile)
             ExportOutcome.Success(savedUri)
         } catch (t: Throwable) {
@@ -67,19 +70,19 @@ class VideoExporter(private val context: Context) {
     private suspend fun runTransformer(
         clips: List<VideoClip>,
         filter: FilterPreset,
-        transition: TransitionType,
+        canvas: CanvasFormat,
         music: MusicSettings?,
         outputFile: File,
     ) = suspendCancellableCoroutine<Unit> { continuation ->
         val editedItems = clips.mapIndexed { index, clip ->
             clip.toEditedMediaItem(
                 filter = filter,
-                transition = transition,
-                isFirstClip = index == 0,
-                isLastClip = index == clips.lastIndex,
+                canvas = canvas,
+                incoming = clips.getOrNull(index - 1)?.transitionOut,
+                outgoing = if (index < clips.lastIndex) clip.transitionOut else null,
             )
         }
-        val videoSequence = EditedMediaItemSequence.Builder(editedItems).build()
+        val videoSequence = EditedMediaItemSequence.withAudioAndVideoFrom(editedItems)
 
         val sequences = mutableListOf(videoSequence)
         if (music != null) {
@@ -122,9 +125,9 @@ class VideoExporter(private val context: Context) {
 
     private fun VideoClip.toEditedMediaItem(
         filter: FilterPreset,
-        transition: TransitionType,
-        isFirstClip: Boolean,
-        isLastClip: Boolean,
+        canvas: CanvasFormat,
+        incoming: Transition?,
+        outgoing: Transition?,
     ): EditedMediaItem {
         val clippedItem = MediaItem.Builder()
             .setUri(uri)
@@ -136,27 +139,37 @@ class VideoExporter(private val context: Context) {
             )
             .build()
 
-        val speedEffects = buildSpeedEffects(speed)
-        val fade = FadeEffects.forClip(
-            clipEffectiveDurationUs = effectiveDurationMs * 1_000L,
-            isFirstClip = isFirstClip,
-            isLastClip = isLastClip,
-            transition = transition,
+        val windows = ClipTransitionWindows.forClip(
+            clipDurationUs = effectiveDurationMs * 1_000L,
+            incoming = incoming,
+            outgoing = outgoing,
         )
-        val captionOverlay = buildCaptionOverlay(captionText)
 
+        val speedEffects = buildSpeedEffects(speed)
+
+        // Order matters: speed first (so later effects see the sped-up timeline) ->
+        // color look -> crop to canvas -> caption (so it's sized to the final
+        // frame) -> transition motion (moves the caption with the clip) ->
+        // transition color (a dip to black also covers the caption).
         val videoEffects = buildList<Effect> {
-            addAll(FilterEffects.effectsFor(filter))
             speedEffects.videoEffect?.let(::add)
-            fade?.let(::add)
-            captionOverlay?.let(::add)
+            addAll(FilterEffects.effectsFor(filter))
+            canvas.presentation()?.let(::add)
+            buildCaptionOverlay(captionText)?.let(::add)
+            if (windows.isActive) {
+                add(TransitionGeometry(windows))
+                add(TransitionColor(windows))
+            }
         }
-        val audioProcessors = listOfNotNull(speedEffects.audioProcessor)
 
         return EditedMediaItem.Builder(clippedItem)
-            .setEffects(Effects(audioProcessors, videoEffects))
+            .setEffects(Effects(listOfNotNull(speedEffects.audioProcessor), videoEffects))
             .build()
     }
+
+    private fun CanvasFormat.presentation(): Presentation? =
+        if (this == CanvasFormat.ORIGINAL) null
+        else Presentation.createForWidthAndHeight(width, height, Presentation.LAYOUT_SCALE_TO_FIT_WITH_CROP)
 
     private fun buildMusicSequence(music: MusicSettings, totalDurationMs: Long): EditedMediaItemSequence {
         val musicItem = MediaItem.Builder()
@@ -175,7 +188,7 @@ class VideoExporter(private val context: Context) {
             .setEffects(Effects(audioProcessors, emptyList()))
             .build()
 
-        return EditedMediaItemSequence.Builder(listOf(editedMusicItem)).build()
+        return EditedMediaItemSequence.withAudioFrom(listOf(editedMusicItem))
     }
 
     private fun saveToGallery(file: File): Uri {

@@ -2,41 +2,45 @@
 
 Native Android-App (Kotlin + Jetpack Compose) zum schnellen Schneiden und
 Zusammenfügen von Kurzvideos für Instagram — Trimmen, Tempo, Filter, Text,
-Musik, exportieren, teilen.
+Übergänge, Musik, exportieren, teilen.
 
 Getestet auf einem echten Gerät (Samsung Galaxy S25, Android 16) per adb/uiautomator —
-nicht nur Code-Review. Build + Deploy + Export wurden end-to-end verifiziert.
+nicht nur Code-Review. Build + Deploy + Export wurden end-to-end verifiziert, jeder
+Übergangstyp einzeln per Frame-Analyse der exportierten Videos.
 
-## Funktionsumfang (v0.3)
+## Funktionsumfang (v0.4)
 
 - **Videos auswählen** über den System-Photo-Picker (kein Storage-Permission-Dialog nötig)
-- **Timeline**: Clips per Pfeil-Buttons neu anordnen, einzeln entfernen, komplette Editor-Seite
-  scrollbar (Filter/Übergang/Musik/Export-Button passen bei vielen Clips sonst nicht auf den Screen)
+- **Timeline**: Clips per Pfeil-Buttons neu anordnen, einzeln entfernen, komplette Editor-Seite scrollbar
 - **Trimmen** pro Clip über einen Start/End-Range-Slider
 - **Geschwindigkeit** pro Clip (0.25x–3x), Video (`SpeedChangeEffect`) und Audio (`SonicAudioProcessor`) bleiben synchron
 - **Text-Overlay** pro Clip (unteres Drittel, `TextOverlay`/`OverlayEffect`)
-- **10 Filter** (Original, Vibrant, Noir, Sepia, Warm, Cool, Moody, Neon, Dreamy, Vintage) – als Media3-GL-Effekte beim Export angewendet
-- **Übergänge**: Schnitt · Fade to Black (eigener zeitbasierter `RgbMatrix`-Effekt – ein echter Video-Crossfade/Dissolve bräuchte Media3s noch experimentelles Multi-Sequence-Compositing, daher diese robuste Alternative)
-- **Musik**: eigener Titel unterlegbar, Lautstärke regelbar (`GainAudioProcessor`, eigener `BaseAudioProcessor` für PCM16-Gain), automatisch auf Videolänge gekürzt. *(v1: konstante Lautstärke, kein automatisches Sprach-Ducking – siehe Nächste Schritte)*
-- **KI-Vorlagen** (6 Stück + bis zu 1 inhaltsbasierte extra):
-  - v1, regelbasiert (`HeuristicTemplateEngine`): Quick Cuts, Highlight, Cinematic (Fade-to-Black), Retro Vibes, Hype Reel, Clean Cut – aus Clip-Anzahl/-Länge
-  - v2, inhaltsbasiert (`ContentAwareTemplateEngine` + `ContentLabeler`): ML Kit Image Labeling (on-device, offline, kein API-Key) auf dem ersten Frame jedes Clips, erkennt Action/Nature/Portrait/Food und schlägt passend Tempo+Filter+Übergang vor – läuft asynchron nach, blockiert die UI nicht
-- **Export**: Media3 Transformer trimmt, hängt Clips zusammen, rendert Filter/Text/Fades/Speed fest ein, mischt optional Musik dazu und speichert das MP4 direkt in die Galerie (`Movies/ReelCut`)
-- **Teilen**: nach dem Export direkt per System-Share-Sheet (Instagram erscheint dort automatisch als Ziel)
+- **Format** (CapCut-artig): 9:16 Reel (Standard, 1080×1920), 4:5 Post, 1:1, Original – jeder Clip wird
+  mittig auf das Format zugeschnitten, gemischte Hoch-/Querformat-Clips ergeben ein einheitliches Video
+- **10 Filter** (Normal, Vibrant, Noir, Sepia, Warm, Cool, Moody, Neon, Dreamy, Vintage)
+- **11 Übergänge pro Schnitt** (CapCut-artig): runder Knopf zwischen zwei Clips öffnet ein Sheet mit
+  Keiner, Schwarz, Blitz, Zoom rein, Zoom raus, Drehen, Wisch links/rechts/hoch, Wackeln, Glitch –
+  Dauer 0,1–1,5 s (Standard 0,3 s), "Auf alle anwenden". Alles "Edge"-Übergänge: der ausgehende Clip
+  animiert in seiner letzten Hälfte, der eingehende in seiner ersten – die Videolänge ändert sich nicht.
+- **Musik**: eigener Titel unterlegbar, Lautstärke regelbar (`GainAudioProcessor`), automatisch auf Videolänge gekürzt
+- **KI-Vorlagen** setzen Tempo, Filter, Trim und Übergang an allen Schnitten:
+  - regelbasiert: Quick Cuts (Zoom-Punch), Highlight (Wischer), Cinematic (kurze Schwarzblende),
+    Retro Vibes (Blitz), Hype Reel (Glitch, 1.25x), Spin Edit (Drehen), Clean Cut
+  - inhaltsbasiert per ML Kit Image Labeling (on-device): Action (Wackeln), Nature (Wischer),
+    Portrait (Blitz), Food (Zoom)
+- **Export** direkt in die Galerie (`Movies/ReelCut`), **Teilen** per System-Share-Sheet
 
 ## Architektur
 
 ```
-model/      VideoClip (inkl. speed, captionText), FilterPreset (10 Presets), TransitionType
-editing/    VideoExporter (Media3 Transformer-Pipeline: HDR-Modus, Trim, Speed, Fade, Text, Filter, Musik-Mix)
-            FilterEffects, ColorMatrixEffects (Grayscale/Sepia), SpeedEffects, FadeEffects (eigene RgbMatrix),
-            TextOverlayEffects, AudioGain (eigener BaseAudioProcessor), ShareIntent, ThumbnailLoader
-ai/         TemplateEngine-Interface + HeuristicTemplateEngine (v1),
-            ContentLabeler (ML Kit) + ContentAwareTemplateEngine (v2)
-ui/home     Auswahl-Screen (Photo Picker)
-ui/editor   Scrollbare Timeline (Trim/Speed/Text), Filter/Übergang/Musik, KI-Vorlagen,
-            fixierter Export-Button (Scaffold bottomBar, navigationBarsPadding)
-ui/navigation  Zwei Screens über eine gemeinsame, activity-scoped EditorViewModel-Instanz
+model/      VideoClip (speed, captionText, transitionOut), Transition/TransitionType,
+            CanvasFormat, FilterPreset
+editing/    VideoExporter (Media3 Transformer-Pipeline), TransitionEffects (Geometrie + Farbe je Clip),
+            FilterEffects, ColorMatrixEffects, SpeedEffects, TextOverlayEffects, AudioGain,
+            ShareIntent, ThumbnailLoader
+ai/         HeuristicTemplateEngine, ContentLabeler (ML Kit) + ContentAwareTemplateEngine
+ui/editor   EditorScreen (Timeline, Vorlagen, Format, Filter, Musik), TransitionPicker
+            (Knopf zwischen Clips + Auswahl-Sheet), EditorViewModel
 ```
 
 ## Setup
@@ -56,27 +60,34 @@ oder Emulator mit **API 26+**.
 Media3 **1.9.4**. Alle verwendeten Transformer/Effect-APIs wurden gegen den echten
 Quellcode auf GitHub geprüft, nicht nur aus dem Gedächtnis geschrieben.
 
-### Bekannte, bereits gefixte Stolperfallen (für's nächste Mal)
+### Stolperfallen, die beim On-Device-Testing aufgefallen sind (alle gefixt)
 
-Zwei nicht offensichtliche Bugs sind beim echten On-Device-Testing aufgefallen –
-beide Codestellen tragen ausführliche Kommentare, hier die Kurzfassung:
+Die Codestellen tragen ausführliche Kommentare, hier die Kurzfassung:
 
-1. **HDR-Aufnahmen (HLG/10-bit, z. B. Samsung-Standardkamera) wurden beim Export
-   falsch eingefärbt**, unabhängig von Filtern. Media3s "richtige" Tonemapping-Modi
-   (`..._USING_OPEN_GL`, `..._USING_MEDIACODEC`) produzierten auf dem Testgerät
-   beide Falschfarben. Fix: `Composition.HDR_MODE_EXPERIMENTAL_FORCE_INTERPRET_HDR_AS_SDR`
-   (siehe `VideoExporter.kt`) – laut Doku "likely washed out", sah im Test aber
-   korrekt aus.
-2. **Eigene `RgbMatrix`-Effekte (Grayscale/Sepia) waren transponiert.** Media3
-   erwartet die 16 Floats **column-major**; row-major geschrieben ergab
-   `out_r=0.299·(r+g+b)`, `out_g=0.587·(r+g+b)`, `out_b=0.114·(r+g+b)` statt dreier
-   gleicher Grauwerte – sichtbar als starker Grün/Gelb-Farbstich. Siehe
-   `ColorMatrixEffects.kt`.
+1. **HDR-Aufnahmen (HLG/10-bit) wurden falsch eingefärbt.** Beide "richtigen"
+   Tonemapping-Modi lieferten auf dem Testgerät Falschfarben; Fix:
+   `HDR_MODE_EXPERIMENTAL_FORCE_INTERPRET_HDR_AS_SDR` (`VideoExporter.kt`).
+2. **Eigene `RgbMatrix`-Effekte müssen column-major sein** – row-major ergab einen
+   Grün/Gelb-Stich statt Graustufen (`ColorMatrixEffects.kt`).
+3. **Effekte bekommen Zeitstempel relativ zum gesamten Video, nicht zum Clip**
+   (Media3 addiert den Clip-Offset vor der Verarbeitung). Der alte Fade rechnete pro
+   Clip ab 0 und machte dadurch ab Clip 2 den kompletten Rest schwarz. Die Übergänge
+   kalibrieren sich jetzt auf den ersten Frame, den sie sehen (`TransitionEffects.kt`).
+4. **`EditedMediaItem.setSpeed` brachte Bild und Ton auseinander** (Clip 2 startete
+   ~130 ms zu früh); stattdessen `SpeedChangeEffect` + `SonicAudioProcessor` (`SpeedEffects.kt`).
 
-## Nächste Schritte / Ideen
+**Bekannte Einschränkung:** Getrimmte Clips aus Quellen *mit B-Frames* (z. B. manche
+heruntergeladenen oder bereits bearbeiteten Videos) verlieren die letzten ~3 Frames vor
+dem Trim-Ende – das zeigt sich als ~0,1 s Standbild, Bild und Ton bleiben synchron.
+Videos aus der Samsung-Kamera haben keine B-Frames und sind nicht betroffen.
 
-- Echter Video-Crossfade/Dissolve (Media3 `VideoCompositorSettings`, noch experimentell) statt Fade-to-Black
-- Automatisches Lautstärke-Ducking der Musik bei Sprache (aktuell nur konstante Lautstärke)
-- Sticker/Bild-Overlays zusätzlich zu Text
-- KI-Vorlagen v3: Cloud-Analyse (Audio/Bewegung) für noch genauere Vorschläge
-- Direktes Teilen als Instagram-Story (eigener Intent-Contract) statt generischem Share-Sheet
+## Nächste Schritte / Ideen (CapCut-Richtung)
+
+- Echte Überblendung ("Mix") und Schiebe-Übergänge mit beiden Clips gleichzeitig im Bild –
+  braucht Media3s Multi-Sequence-Compositing (zwei Video-Spuren mit Lücken + Alpha pro Frame)
+- Tempo-Kurven (Montage, Hero, Bullet, Flash in/out) über einen variablen `SpeedProvider`
+- Text-Animationen und -Stile, automatische Untertitel
+- Beat-Sync: Schnitte automatisch auf die Musik legen
+- Unscharfer Hintergrund statt Zuschnitt bei Format-Wechsel (CapCut "Canvas Blur")
+- Automatisches Lautstärke-Ducking der Musik bei Sprache
+- Vorschau-Player im Editor, damit man Übergänge vor dem Export sieht

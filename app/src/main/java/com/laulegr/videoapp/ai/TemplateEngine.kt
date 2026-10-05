@@ -1,6 +1,7 @@
 package com.laulegr.videoapp.ai
 
 import com.laulegr.videoapp.model.FilterPreset
+import com.laulegr.videoapp.model.Transition
 import com.laulegr.videoapp.model.TransitionType
 import com.laulegr.videoapp.model.VideoClip
 
@@ -27,14 +28,15 @@ class HeuristicTemplateEngine : TemplateEngine {
         val avgMs = totalMs / clips.size
         val suggestions = mutableListOf<EditTemplate>()
 
-        // Many short clips -> fast-paced montage, hard cuts, punchy filter.
+        // Many short clips -> fast-paced montage with quick zoom punches.
         if (clips.size >= 4 || avgMs < 4_000) {
             suggestions += EditTemplate(
                 id = "quick_cuts",
                 title = "Quick Cuts",
-                description = "Kurze, knackige Schnitte (${clips.size} Clips) für einen schnellen Reel-Rhythmus.",
+                description = "Kurze, knackige Schnitte (${clips.size} Clips) mit Zoom-Punch – schneller Reel-Rhythmus.",
                 perClipDurationMs = 1_500L,
                 filter = FilterPreset.VIBRANT,
+                transition = Transition(TransitionType.ZOOM_IN, 250L),
             )
         }
 
@@ -43,47 +45,57 @@ class HeuristicTemplateEngine : TemplateEngine {
             suggestions += EditTemplate(
                 id = "highlight",
                 title = "Highlight",
-                description = "Längere Ausschnitte je Clip, ruhigerer Schnitt für ein Highlight-Reel.",
+                description = "Längere Ausschnitte je Clip, weiche Wischer – ruhig, aber nicht langweilig.",
                 perClipDurationMs = (avgMs * 0.6).toLong().coerceAtLeast(2_000L),
                 filter = FilterPreset.WARM,
+                transition = Transition(TransitionType.SWIPE_LEFT, 400L),
             )
         }
 
-        // Two or more clips -> a moodier, film-like cut with fades between clips.
         if (clips.size >= 2) {
             suggestions += EditTemplate(
                 id = "cinematic",
                 title = "Cinematic",
-                description = "Moody-Look mit Fade-to-Black zwischen den Clips – wirkt wie ein kleiner Film.",
+                description = "Moody-Look mit kurzer Schwarzblende – wirkt wie ein kleiner Film.",
                 perClipDurationMs = (avgMs * 0.7).toLong().coerceAtLeast(2_000L),
                 filter = FilterPreset.MOODY,
-                transition = TransitionType.FADE_TO_BLACK,
+                transition = Transition(TransitionType.FADE_BLACK, 500L),
             )
         }
 
         suggestions += EditTemplate(
             id = "retro",
             title = "Retro Vibes",
-            description = "Vintage-Look, entsättigt und warm – wie von einer alten Kamera.",
+            description = "Vintage-Look mit Blitz-Übergängen – wie eine alte Filmkamera.",
             perClipDurationMs = null,
             filter = FilterPreset.VINTAGE,
+            transition = Transition(TransitionType.FLASH_WHITE, 300L),
         )
 
-        // High-energy variant for anyone who wants it snappier and punchier.
         suggestions += EditTemplate(
             id = "hype",
             title = "Hype Reel",
-            description = "Neon-Filter, 1.25x Tempo, straffe Schnitte – für viel Energie im Feed.",
+            description = "Neon, 1.25x Tempo, Glitch zwischen den Clips – maximal Energie.",
             perClipDurationMs = 1_200L,
             filter = FilterPreset.NEON,
             speed = 1.25f,
+            transition = Transition(TransitionType.GLITCH, 300L),
+        )
+
+        suggestions += EditTemplate(
+            id = "spin",
+            title = "Spin Edit",
+            description = "Schnelle Dreh-Übergänge, satte Farben – der klassische Trend-Edit.",
+            perClipDurationMs = 2_000L,
+            filter = FilterPreset.VIBRANT,
+            transition = Transition(TransitionType.SPIN, 300L),
         )
 
         // Always offer a neutral, untouched option.
         suggestions += EditTemplate(
             id = "clean",
             title = "Clean Cut",
-            description = "Original-Länge der Clips, kein Filter – nur zusammengefügt.",
+            description = "Original-Länge der Clips, kein Filter, harte Schnitte – nur zusammengefügt.",
             perClipDurationMs = null,
             filter = FilterPreset.NONE,
         )
@@ -111,35 +123,38 @@ object ContentAwareTemplateEngine {
             topLabels.any { it in actionLabels } -> EditTemplate(
                 id = "ai_action",
                 title = "Action (KI)",
-                description = "Erkannt: Bewegung/Sport im Material – knackige 1s-Schnitte, leichter Speed-up, Neon-Filter.",
+                description = "Erkannt: Bewegung/Sport im Material – 1s-Schnitte, Speed-up, Wackel-Übergänge.",
                 perClipDurationMs = 1_000L,
                 filter = FilterPreset.NEON,
                 speed = 1.15f,
+                transition = Transition(TransitionType.SHAKE, 300L),
             )
 
             topLabels.any { it in natureLabels } -> EditTemplate(
                 id = "ai_nature",
                 title = "Nature (KI)",
-                description = "Erkannt: Landschaft/Natur im Material – ruhigeres Tempo, kühlerer Look, Fade zwischen den Clips.",
+                description = "Erkannt: Landschaft/Natur im Material – kühler Look, Wischer wie ein Kameraschwenk.",
                 perClipDurationMs = null,
                 filter = FilterPreset.COOL,
-                transition = TransitionType.FADE_TO_BLACK,
+                transition = Transition(TransitionType.SWIPE_LEFT, 400L),
             )
 
             topLabels.any { it in portraitLabels } -> EditTemplate(
                 id = "ai_portrait",
                 title = "Portrait (KI)",
-                description = "Erkannt: Personen/Gesichter im Material – ruhigere Schnitte, warmer Hautton-Filter.",
+                description = "Erkannt: Personen/Gesichter im Material – warmer Hautton, sanfte Blitz-Übergänge.",
                 perClipDurationMs = null,
                 filter = FilterPreset.WARM,
+                transition = Transition(TransitionType.FLASH_WHITE, 300L),
             )
 
             topLabels.any { it in foodLabels } -> EditTemplate(
                 id = "ai_food",
                 title = "Food (KI)",
-                description = "Erkannt: Essen/Getränke im Material – sattere Farben, mittleres Tempo.",
+                description = "Erkannt: Essen/Getränke im Material – sattere Farben, Zoom-Punch.",
                 perClipDurationMs = 2_000L,
                 filter = FilterPreset.VIBRANT,
+                transition = Transition(TransitionType.ZOOM_IN, 300L),
             )
 
             else -> null

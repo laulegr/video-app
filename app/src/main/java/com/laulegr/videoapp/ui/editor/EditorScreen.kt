@@ -17,14 +17,15 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.KeyboardArrowLeft
-import androidx.compose.material.icons.filled.KeyboardArrowRight
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -47,6 +48,9 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -55,9 +59,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.laulegr.videoapp.ai.EditTemplate
 import com.laulegr.videoapp.editing.shareVideo
+import com.laulegr.videoapp.model.CanvasFormat
 import com.laulegr.videoapp.model.FilterPreset
 import com.laulegr.videoapp.model.SPEED_STEPS
-import com.laulegr.videoapp.model.TransitionType
 import com.laulegr.videoapp.model.VideoClip
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -68,6 +72,7 @@ fun EditorScreen(
 ) {
     val state by viewModel.uiState.collectAsState()
     val context = LocalContext.current
+    var transitionSheetClipId by remember { mutableStateOf<String?>(null) }
 
     val pickMusic = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent(),
@@ -79,7 +84,7 @@ fun EditorScreen(
                 title = { Text("Editor · ${state.clips.size} Clips") },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.Filled.ArrowBack, contentDescription = "Zurück")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Zurück")
                     }
                 },
             )
@@ -120,6 +125,7 @@ fun EditorScreen(
                 onTrim = viewModel::updateTrim,
                 onSpeed = viewModel::setClipSpeed,
                 onCaption = viewModel::setClipCaption,
+                onTransitionClick = { clipId -> transitionSheetClipId = clipId },
             )
 
             Spacer(Modifier.height(20.dp))
@@ -127,12 +133,12 @@ fun EditorScreen(
             TemplateRow(templates = state.templates, onApply = viewModel::applyTemplate)
 
             Spacer(Modifier.height(20.dp))
-            SectionLabel("Filter")
-            FilterRow(selected = state.filter, onSelect = viewModel::setFilter)
+            SectionLabel("Format")
+            CanvasRow(selected = state.canvas, onSelect = viewModel::setCanvas)
 
             Spacer(Modifier.height(20.dp))
-            SectionLabel("Übergang")
-            TransitionRow(selected = state.transition, onSelect = viewModel::setTransition)
+            SectionLabel("Filter")
+            FilterRow(selected = state.filter, onSelect = viewModel::setFilter)
 
             Spacer(Modifier.height(20.dp))
             SectionLabel("Musik")
@@ -146,6 +152,16 @@ fun EditorScreen(
 
             Spacer(Modifier.height(16.dp))
         }
+    }
+
+    val sheetClip = state.clips.firstOrNull { it.id == transitionSheetClipId }
+    if (sheetClip != null) {
+        TransitionSheet(
+            current = sheetClip.transitionOut,
+            onChange = { viewModel.setClipTransition(sheetClip.id, it) },
+            onApplyToAll = viewModel::applyTransitionToAll,
+            onDismiss = { transitionSheetClipId = null },
+        )
     }
 
     when (val exportState = state.exportState) {
@@ -186,6 +202,7 @@ private fun Timeline(
     onTrim: (String, Long, Long) -> Unit,
     onSpeed: (String, Float) -> Unit,
     onCaption: (String, String) -> Unit,
+    onTransitionClick: (String) -> Unit,
 ) {
     if (clips.isEmpty()) {
         Text(
@@ -200,16 +217,24 @@ private fun Timeline(
         contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 16.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        items(clips, key = { it.id }) { clip ->
-            ClipCard(
-                clip = clip,
-                onMoveLeft = { onMove(clip.id, -1) },
-                onMoveRight = { onMove(clip.id, 1) },
-                onRemove = { onRemove(clip.id) },
-                onTrim = { start, end -> onTrim(clip.id, start, end) },
-                onSpeed = { speed -> onSpeed(clip.id, speed) },
-                onCaption = { text -> onCaption(clip.id, text) },
-            )
+        itemsIndexed(clips, key = { _, clip -> clip.id }) { index, clip ->
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                ClipCard(
+                    clip = clip,
+                    onMoveLeft = { onMove(clip.id, -1) },
+                    onMoveRight = { onMove(clip.id, 1) },
+                    onRemove = { onRemove(clip.id) },
+                    onTrim = { start, end -> onTrim(clip.id, start, end) },
+                    onSpeed = { speed -> onSpeed(clip.id, speed) },
+                    onCaption = { text -> onCaption(clip.id, text) },
+                )
+                if (index < clips.lastIndex) {
+                    TransitionButton(clip.transitionOut, onClick = { onTransitionClick(clip.id) })
+                }
+            }
         }
     }
 }
@@ -252,11 +277,11 @@ private fun ClipCard(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 IconButton(onClick = onMoveLeft) {
-                    Icon(Icons.Filled.KeyboardArrowLeft, contentDescription = "Nach links")
+                    Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, contentDescription = "Nach links")
                 }
                 Text(formatMs(clip.effectiveDurationMs), style = MaterialTheme.typography.bodyMedium)
                 IconButton(onClick = onMoveRight) {
-                    Icon(Icons.Filled.KeyboardArrowRight, contentDescription = "Nach rechts")
+                    Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = "Nach rechts")
                 }
                 IconButton(onClick = onRemove) {
                     Icon(Icons.Filled.Close, contentDescription = "Entfernen")
@@ -348,16 +373,16 @@ private fun FilterRow(selected: FilterPreset, onSelect: (FilterPreset) -> Unit) 
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun TransitionRow(selected: TransitionType, onSelect: (TransitionType) -> Unit) {
+private fun CanvasRow(selected: CanvasFormat, onSelect: (CanvasFormat) -> Unit) {
     LazyRow(
         contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 16.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        items(TransitionType.entries) { transition ->
+        items(CanvasFormat.entries) { canvas ->
             FilterChip(
-                selected = transition == selected,
-                onClick = { onSelect(transition) },
-                label = { Text(transition.label) },
+                selected = canvas == selected,
+                onClick = { onSelect(canvas) },
+                label = { Text(canvas.label) },
             )
         }
     }
